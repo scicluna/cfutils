@@ -71,7 +71,7 @@ export function activate(context: vscode.ExtensionContext) {
 				const functionCallRegex = /(\w+)\(/;
 				const functionCallMatch = functionCallRegex.exec(assignedValue);
 
-				let inferredType = 'unknown';
+				let inferredType = 'any';
 				if (functionCallMatch) {
 					const calledFunction = functionCallMatch[1];
 					inferredType = functionReturnTypes[calledFunction] || inferredType;
@@ -84,6 +84,20 @@ export function activate(context: vscode.ExtensionContext) {
 						inferredType = 'numeric';
 					} else if (/^(true|false)$/.test(assignedValue)) {
 						inferredType = 'boolean';
+					} else if (/^createObject\("java",/.test(assignedValue)) {
+						inferredType = 'Java Object';
+					} else if (/^structNew\(\)/.test(assignedValue) || /^\{.*\}$/.test(assignedValue)) {
+						inferredType = 'struct';
+					} else if (/^arrayNew\(\d\)/.test(assignedValue) || /^\[.*\]$/.test(assignedValue)) {
+						inferredType = 'array';
+					} else if (/^createObject\("component"/.test(assignedValue) || /\.cfc$/.test(assignedValue)) {
+						inferredType = 'CFC';
+					} else if (/^queryNew\(/.test(assignedValue)) {
+						inferredType = 'query';
+					} else if (/^dateAdd\(/.test(assignedValue) || /^now\(\)/.test(assignedValue)) {
+						inferredType = 'date/time';
+					} else if (/^createUUID\(\)/.test(assignedValue)) {
+						inferredType = 'UUID';
 					} // ... (other type checks)
 				}
 
@@ -136,11 +150,11 @@ function updateDiagnostics(document: vscode.TextDocument, collection: vscode.Dia
 		'public', 'return', 'function', 'numeric', 'string', 'boolean', 'void', 'private', 'component', 'property', 'if', 'else', 'for', 'while', 'do', 'var', 'local',
 		'parameterexists', 'preservesinglequotes', 'quotedvaluelist', 'valuelist', 'now', 'hash', 'form', 'session', 'neq', 'is',
 		'default', 'switch', 'case', 'continue', 'import', 'finally', 'interface', 'pageencoding', 'try', 'catch', 'in', 'break',
-		'true', 'false', 'final', 'abstract', 'null', 'cfimport'
+		'true', 'false', 'final', 'abstract', 'null', 'cfimport', 'httpResult', 'cfhttp', 'cfhttpparam', 'cfquery', 'cfqueryparam', 'form', 'variables', 'AND', 'OR',
 	]);
 
 	// Capture variable assignments
-	const variableAssignments = /(\w+)\s*=\s*.+/g;
+	const variableAssignments = /(\w+)\s*=\s*[^;]+\;?/g;
 	let match;
 	while (match = variableAssignments.exec(text)) {
 		allVariables.add(match[1]);
@@ -151,69 +165,48 @@ function updateDiagnostics(document: vscode.TextDocument, collection: vscode.Dia
 	while (match = functionDefinitions.exec(text)) {
 		const args = match[1].split(',').map(arg => {
 			const parts = arg.trim().split(' ');
-			return parts.length > 1 ? parts[1] : parts[0]; // If there's a type, get the second part; otherwise, get the first part
+			return parts.length > 1 ? parts[1] : parts[0];
 		});
 		args.forEach(arg => allVariables.add(arg));
 	}
 
 	const diagnostics: vscode.Diagnostic[] = [];
-	const variableUsage = /\b(\w+)\b/g; // Capture words
-
-	let insideScriptBlock = false;
-	let insideCfOutputBlock = false;
+	const variableUsage = /\b(\w+)\b/g;
 
 	for (let lineNo = 0; lineNo < document.lineCount; lineNo++) {
 		const line = document.lineAt(lineNo).text;
 
-		// Check if we're entering or exiting a <cfscript> block
-		if (line.includes('<cfscript>')) {
-			insideScriptBlock = true;
-			continue;
-		} else if (line.includes('</cfscript>')) {
-			insideScriptBlock = false;
-			continue;
-		}
-
-		// Check if we're entering or exiting a <cfoutput> block
-		if (line.includes('<cfoutput>')) {
-			insideCfOutputBlock = true;
-		} else if (line.includes('</cfoutput>')) {
-			insideCfOutputBlock = false;
-		}
-
 		while (match = variableUsage.exec(line)) {
 			const variable = match[1];
 
-			// Check if the word is a number or a string
-			if (/^\d+$/.test(variable) || /["'].*["']/.test(variable)) {
+			// If the variable is inside a doublequote string literal, ignore it
+			if (line.slice(0, match.index).split('"').length % 2 === 0 && line.slice(match.index).split('"').length % 2 === 0) {
 				continue;
 			}
 
-			const precedingChar = line[match.index - 1];
-			const followingChar = line[match.index + variable.length];
-
-			// If we're outside a <cfscript> block and not inside a <cfoutput> block, ensure variable is enclosed within # #
-			if (!insideScriptBlock && !insideCfOutputBlock && (precedingChar !== '#' || followingChar !== '#')) {
+			// If the variable is inside a singlequote string literal, ignore it
+			if (line.slice(0, match.index).split("'").length % 2 === 0 && line.slice(match.index).split("'").length % 2 === 0) {
 				continue;
 			}
 
-			// Check if the word is a function call
-			const isFunctionCall = followingChar === '(';
-
-			// If we're outside a <cfscript> block, ensure variable is enclosed within # #
-			if (!insideScriptBlock && (precedingChar !== '#' || followingChar !== '#')) {
+			// If the variable is a ColdFusion keyword, ignore it
+			if (cfKeywords.has(variable.toLowerCase())) {
 				continue;
 			}
 
-			// Check if the word is a ColdFusion keyword or a known variable
-			if (!allVariables.has(variable) && !cfKeywords.has(variable.toLowerCase()) && !isFunctionCall) {
+			// If the variable is a cf tag, ignore it.
+
+			// If the variable is a function call, ignore it.
+
+
+			// If the variable is not in our set of known variables, mark it as undefined
+			if (!allVariables.has(variable)) {
 				const range = new vscode.Range(lineNo, match.index, lineNo, match.index + variable.length);
 				const diagnostic = new vscode.Diagnostic(range, `The variable "${variable}" is not defined.`, vscode.DiagnosticSeverity.Error);
 				diagnostics.push(diagnostic);
 			}
 		}
 	}
-
 	collection.set(document.uri, diagnostics);
 }
 
