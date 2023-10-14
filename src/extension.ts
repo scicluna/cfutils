@@ -1,6 +1,11 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
+import { extractFunctionDefinitionInfo, getHoverInfoForArgument } from './hover/functionvalidators';
+import { inferVariableTypes } from './hover/inferTypes';
+import { isBuiltInScope } from './hover/scopes';
+import { isValidCfVariable } from './hover/validators';
+
 
 const cfmlDiagnostics = vscode.languages.createDiagnosticCollection('cfml');
 
@@ -9,111 +14,39 @@ const cfmlDiagnostics = vscode.languages.createDiagnosticCollection('cfml');
 export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(vscode.languages.registerHoverProvider(['cfml', 'cfc'], {
 		provideHover(document, position, token) {
+			const text = document.getText();
 			const range = document.getWordRangeAtPosition(position);
 			const word = document.getText(range);
 
 			// Check if the word is a valid ColdFusion variable
-			const isValidVariable = /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(word);
-			if (!isValidVariable) {
+			if (!isValidCfVariable(word)) {
 				return;
 			}
 
-			const functionRegex = /public (\w+) function (\w+)\(([^)]*)\)/g;
-			let match;
-			const functionReturnTypes: { [key: string]: string } = {};
-			const functionArguments: { [key: string]: { [argName: string]: string } } = {};
-
-			while (match = functionRegex.exec(document.getText())) {
-				const returnType = match[1];
-				const functionName = match[2];
-				functionReturnTypes[functionName] = returnType;
-
-				const args = match[3].split(',').reduce((acc: any, arg) => {
-					const [type, name] = arg.trim().split(' ');
-					acc[name] = type;
-					return acc;
-				}, {});
-
-				functionArguments[functionName] = args;
+			// Check if the word is a ColdFusion scope
+			if (isBuiltInScope(word)) {
+				return new vscode.Hover(`Scope: **${word}**`);
 			}
+
+			// Extract function definitions to get return types and arguments
+			const { functionReturnTypes, functionArguments } = extractFunctionDefinitionInfo(text);
 
 			// Check if the hovered word is an argument inside a function
-			const functionBodyRegex = /function \w+\(([^)]*)\)\s*{([\s\S]*?)}/g;
-			while (match = functionBodyRegex.exec(document.getText())) {
-				const args = match[1];
-				const body = match[2].split('\n'); // Split the body into lines
-
-				for (const line of body) {
-					if (line.includes(word)) {
-						const argNames = args.split(',').map(arg => arg.trim().split(' ')[1]);
-						if (argNames.includes(word)) {
-							for (const functionName in functionArguments) {
-								console.log(functionArguments[functionName]);
-								if (functionArguments[functionName][word]) {
-									return new vscode.Hover(`Argument: **${word}** : _${functionArguments[functionName][word]}_`);
-								}
-							}
-						}
-					}
-				}
+			const hoverInfoForArg = getHoverInfoForArgument(text, word, functionArguments);
+			if (hoverInfoForArg) {
+				return hoverInfoForArg;
 			}
 
-
-			const variableAssignments = /(\w+)\s*=\s*([^;\n]+)/g;
-			const variableTypes: { [key: string]: { type: string, position: vscode.Position }[] } = {};
-
-			while (match = variableAssignments.exec(document.getText())) {
-				const variableName = match[1];
-				const assignedValue = match[2].trim();
-				const assignmentPosition = document.positionAt(match.index);
-
-				// Check for function calls in variable assignments
-				const functionCallRegex = /(\w+)\(/;
-				const functionCallMatch = functionCallRegex.exec(assignedValue);
-
-				let inferredType = 'any';
-				if (functionCallMatch) {
-					const calledFunction = functionCallMatch[1];
-					inferredType = functionReturnTypes[calledFunction] || inferredType;
-				} else {
-					if (/^["']/.test(assignedValue)) {
-						inferredType = 'string';
-					} else if (/^\d+$/.test(assignedValue)) {
-						inferredType = 'numeric';
-					} else if (/^\d+\.\d+$/.test(assignedValue)) {
-						inferredType = 'numeric';
-					} else if (/^(true|false)$/.test(assignedValue)) {
-						inferredType = 'boolean';
-					} else if (/^createObject\("java",/.test(assignedValue)) {
-						inferredType = 'Java Object';
-					} else if (/^structNew\(\)/.test(assignedValue) || /^\{.*\}$/.test(assignedValue)) {
-						inferredType = 'struct';
-					} else if (/^arrayNew\(\d\)/.test(assignedValue) || /^\[.*\]$/.test(assignedValue)) {
-						inferredType = 'array';
-					} else if (/^createObject\("component"/.test(assignedValue) || /\.cfc$/.test(assignedValue)) {
-						inferredType = 'CFC';
-					} else if (/^queryNew\(/.test(assignedValue)) {
-						inferredType = 'query';
-					} else if (/^dateAdd\(/.test(assignedValue) || /^now\(\)/.test(assignedValue)) {
-						inferredType = 'date/time';
-					} else if (/^createUUID\(\)/.test(assignedValue)) {
-						inferredType = 'UUID';
-					} // ... (other type checks)
-				}
-
-				if (!variableTypes[variableName]) {
-					variableTypes[variableName] = [];
-				}
-				variableTypes[variableName].push({ type: inferredType, position: assignmentPosition });
-			}
+			// Infer variable types using the function return types
+			const inferredTypes = inferVariableTypes(text, document, functionReturnTypes);
 
 			// Provide hover information for the variable
-			if (variableTypes[word]) {
+			if (inferredTypes[word]) {
 				// Find the most recent assignment before the hover position
 				let recentType: string | null = null;
-				for (let i = variableTypes[word].length - 1; i >= 0; i--) {
-					if (variableTypes[word][i].position.isBefore(position)) {
-						recentType = variableTypes[word][i].type;
+				for (let i = inferredTypes[word].length - 1; i >= 0; i--) {
+					if (inferredTypes[word][i].position.isBefore(position)) {
+						recentType = inferredTypes[word][i].type;
 						break;
 					}
 				}
@@ -124,12 +57,13 @@ export function activate(context: vscode.ExtensionContext) {
 			}
 		}
 	}));
+
+	//add listeners for diagnostics
 	context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
 		if (event.document.languageId === 'cfml') {
 			updateDiagnostics(event.document, cfmlDiagnostics);
 		}
 	}));
-
 	context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(document => {
 		if (document.languageId === 'cfml') {
 			updateDiagnostics(document, cfmlDiagnostics);
@@ -141,6 +75,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 }
 
+//Handle diagnostics
 function updateDiagnostics(document: vscode.TextDocument, collection: vscode.DiagnosticCollection): void {
 	const text = document.getText();
 	const allVariables = new Set<string>();
