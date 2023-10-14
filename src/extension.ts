@@ -5,6 +5,9 @@ import { extractFunctionDefinitionInfo, getHoverInfoForArgument } from './hover/
 import { inferVariableTypes } from './hover/inferTypes';
 import { isBuiltInScope } from './hover/scopes';
 import { isValidCfVariable } from './hover/validators';
+import { checkCfOutput, checkCfScript } from './diagnostics/scriptTagTest';
+import { extractFunctionNamesFromLine } from './diagnostics/extractFunctionNames';
+import { cfCheck, numericCheck, stringCheck } from './diagnostics/validate';
 
 
 const cfmlDiagnostics = vscode.languages.createDiagnosticCollection('cfml');
@@ -27,6 +30,8 @@ export function activate(context: vscode.ExtensionContext) {
 			if (isBuiltInScope(word)) {
 				return new vscode.Hover(`Scope: **${word}**`);
 			}
+
+			//Check if its in tags
 
 			// Extract function definitions to get return types and arguments
 			const { functionReturnTypes, functionArguments } = extractFunctionDefinitionInfo(text);
@@ -79,92 +84,68 @@ export function activate(context: vscode.ExtensionContext) {
 function updateDiagnostics(document: vscode.TextDocument, collection: vscode.DiagnosticCollection): void {
 	const text = document.getText();
 	const allVariables = new Set<string>();
+	const diagnostics: vscode.Diagnostic[] = [];
+	const variableAssignments = /(\w+)\s*=\s*[^;]+\;?/g;
+	const variableUsage = /\b(\w+(\.\w+)*)\b(?![\s]*["'=])/g;
+	let insideCfScript = false;
+	let insideCfOutput = false;
+	let match;
 
 	// List of ColdFusion keywords to exclude
-	const cfKeywords = new Set([
-		'public', 'return', 'function', 'numeric', 'string', 'boolean', 'void', 'private', 'component', 'property', 'if', 'else', 'for', 'while', 'do', 'var', 'local',
-		'parameterexists', 'preservesinglequotes', 'quotedvaluelist', 'valuelist', 'now', 'hash', 'form', 'session', 'neq', 'is',
-		'default', 'switch', 'case', 'continue', 'import', 'finally', 'interface', 'pageencoding', 'try', 'catch', 'in', 'break',
-		'true', 'false', 'final', 'abstract', 'null', 'cfimport', 'httpResult', 'cfhttp', 'cfhttpparam', 'cfquery', 'cfqueryparam', 'form', 'variables', 'AND', 'OR',
-	]);
 
-	// Capture variable assignments
-	const variableAssignments = /(\w+)\s*=\s*[^;]+\;?/g;
-	let match;
 	while (match = variableAssignments.exec(text)) {
 		allVariables.add(match[1]);
 	}
 
-	// Capture function names and arguments
-	const functionDefinitions = /function \w+\(([^)]*)\)/g;
-	while (match = functionDefinitions.exec(text)) {
-		const args = match[1].split(',').map(arg => {
-			const parts = arg.trim().split(' ');
-			return parts.length > 1 ? parts[1] : parts[0];
-		});
-		args.forEach(arg => allVariables.add(arg));
-	}
-
-	// Capture function calls and their arguments
-	// Capture function calls and their arguments
-	const functionCalls = /(\w+)\(([^)]*)\)/g;
-	while (match = functionCalls.exec(text)) {
-		const functionName = match[1];
-		allVariables.add(functionName);  // Add function name to known variables
-
-		const args = match[2].split(',').map(arg => arg.trim());
-		args.forEach(arg => {
-			// Only add the argument if it's not a string
-			if (!arg.startsWith('"') && !arg.startsWith("'")) {
-				allVariables.add(arg);
-			}
-		});
-	}
-
-	const diagnostics: vscode.Diagnostic[] = [];
-	const variableUsage = /\b(\w+(\.\w+)*)\b/g; // Capture words and properties like form.city
-	const tagPattern = /<[^>]+>/g;
-
 	for (let lineNo = 0; lineNo < document.lineCount; lineNo++) {
 		const line = document.lineAt(lineNo).text;
+
+		// Check for context
+		insideCfScript = checkCfScript(line, insideCfScript);
+		insideCfOutput = checkCfOutput(line, insideCfOutput);
 
 		if (line.trim().startsWith('//')) {
 			continue;
 		}
 
-		// Remove content inside tags
-		let processedLine = line.replace(tagPattern, '');
+		// Extract function names from the line
+		const functionNames = extractFunctionNamesFromLine(line);
 
-		// If the processed line is empty, skip to the next line
-		if (!processedLine.trim()) {
-			continue;
-		}
-
+		// Check for variable usage
 		while (match = variableUsage.exec(line)) {
 			const variable = match[1];
 
-			// Split the variable into parts to check for object properties
-			const parts = variable.split('.');
-			const baseVariable = parts[0];
-
-			// If the variable is inside a doublequote string literal, ignore it
-			if (line.slice(0, match.index).split('"').length % 2 === 0 && line.slice(match.index).split('"').length % 2 === 0) {
+			// If not inside cfscript or cfoutput, skip processing
+			if (!insideCfScript && !insideCfOutput) {
 				continue;
 			}
 
-			// If the variable is inside a singlequote string literal, ignore it
-			if (line.slice(0, match.index).split("'").length % 2 === 0 && line.slice(match.index).split("'").length % 2 === 0) {
+			// If inside cfoutput but the variable is not wrapped with #, skip processing
+			if (insideCfOutput && !line.includes('#' + variable + '#')) {
 				continue;
 			}
 
-			// If the variable is a ColdFusion keyword, ignore it
-			if (cfKeywords.has(variable.toLowerCase())) {
+			// If its a string literal, skip processing
+			if (!stringCheck(line, match)) {
 				continue;
 			}
 
+			// If its a number, skip processing
+			if (!numericCheck(line, match)) {
+				continue;
+			}
 
-			// Check if the base variable is a known variable or a ColdFusion keyword
-			if (!allVariables.has(baseVariable) && !cfKeywords.has(baseVariable.toLowerCase())) {
+			// If the variable is a function name, ignore it
+			if (functionNames.has(variable)) {
+				continue;
+			}
+
+			if (!cfCheck(variable)) {
+				continue;
+			}
+
+			// If the variable is not known, add a diagnostic
+			if (!allVariables.has(variable)) {
 				const range = new vscode.Range(lineNo, match.index, lineNo, match.index + variable.length);
 				const diagnostic = new vscode.Diagnostic(range, `The variable "${variable}" is not defined.`, vscode.DiagnosticSeverity.Error);
 				diagnostics.push(diagnostic);
