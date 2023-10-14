@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 
 export function inferVariableTypes(documentText: string, document: vscode.TextDocument, functionReturnTypes: { [key: string]: string }): { [key: string]: { type: string, position: vscode.Position }[] } {
     const variableAssignments = /(\w+)\s*=\s*([^;\n]+)/g;
+    const cfloopPattern = /<cfloop[^>]*index="(\w+)"[^>]*>/g;
     const variableTypes: { [key: string]: { type: string, position: vscode.Position }[] } = {};
     let match;
 
@@ -13,6 +14,16 @@ export function inferVariableTypes(documentText: string, document: vscode.TextDo
         // Check for function calls in variable assignments
         const functionCallRegex = /(\w+)\(/;
         const functionCallMatch = functionCallRegex.exec(assignedValue);
+
+        // Extract variables introduced by <cfloop>
+        while (match = cfloopPattern.exec(documentText)) {
+            const loopVariableName = match[1];
+            const loopVariablePosition = document.positionAt(match.index);
+            if (!variableTypes[loopVariableName]) {
+                variableTypes[loopVariableName] = [];
+            }
+            variableTypes[loopVariableName].push({ type: 'any', position: loopVariablePosition });
+        }
 
         let inferredType = 'any';
         if (functionCallMatch) {

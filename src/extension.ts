@@ -85,8 +85,9 @@ function updateDiagnostics(document: vscode.TextDocument, collection: vscode.Dia
 	const text = document.getText();
 	const allVariables = new Set<string>();
 	const diagnostics: vscode.Diagnostic[] = [];
-	const variableAssignments = /(\w+)\s*=\s*[^;]+\;?/g;
+	const variableAssignments = /(\w+)\s*=\s*[^;\n]+[;\n]?/g;
 	const variableUsage = /\b(\w+(\.\w+)*)\b(?![\s]*["'=])/g;
+	const cfloopPattern = /<cfloop[^>]*index="(\w+)"[^>]*>/g;
 	let insideCfScript = false;
 	let insideCfOutput = false;
 	let match;
@@ -94,6 +95,10 @@ function updateDiagnostics(document: vscode.TextDocument, collection: vscode.Dia
 	// List of ColdFusion keywords to exclude
 
 	while (match = variableAssignments.exec(text)) {
+		allVariables.add(match[1]);
+	}
+
+	while (match = cfloopPattern.exec(text)) {
 		allVariables.add(match[1]);
 	}
 
@@ -114,6 +119,12 @@ function updateDiagnostics(document: vscode.TextDocument, collection: vscode.Dia
 		// Check for variable usage
 		while (match = variableUsage.exec(line)) {
 			const variable = match[1];
+			const rootVariable = variable.split('.')[0]; // Extract the root variable
+
+			// If the root variable is known, skip the diagnostic
+			if (allVariables.has(rootVariable)) {
+				continue;
+			}
 
 			// If not inside cfscript or cfoutput, skip processing
 			if (!insideCfScript && !insideCfOutput) {

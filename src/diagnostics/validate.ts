@@ -1,5 +1,3 @@
-import { fail } from "assert";
-
 export function stringCheck(line: string, match: RegExpMatchArray) {
     // Check if the variable is inside a doublequote string literal
     if (line.slice(0, match.index).split('"').length % 2 === 0 && line.slice(match.index).split('"').length % 2 === 0) {
@@ -30,7 +28,6 @@ export function cfCheck(variable: string) {
         'true', 'false', 'final', 'abstract', 'null', 'cfimport', 'httpResult', 'cfhttp', 'cfhttpparam', 'cfquery', 'cfqueryparam', 'form', 'variables', 'AND', 'OR',
         'cfscript', 'cfoutput', 'cfset', 'cfif', 'cfelseif', 'cfelse', 'cfreturn', 'cfbreak', 'cfcontinue', 'cffunction', 'cffunction', 'cfargument', 'cfcomponent', 'cfproperty',
     ]);
-    console.log(variable);
 
     let test = true;
     // If the variable starts with a ColdFusion keyword followed by a period, ignore it
