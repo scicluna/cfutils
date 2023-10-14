@@ -170,14 +170,47 @@ function updateDiagnostics(document: vscode.TextDocument, collection: vscode.Dia
 		args.forEach(arg => allVariables.add(arg));
 	}
 
+	// Capture function calls and their arguments
+	// Capture function calls and their arguments
+	const functionCalls = /(\w+)\(([^)]*)\)/g;
+	while (match = functionCalls.exec(text)) {
+		const functionName = match[1];
+		allVariables.add(functionName);  // Add function name to known variables
+
+		const args = match[2].split(',').map(arg => arg.trim());
+		args.forEach(arg => {
+			// Only add the argument if it's not a string
+			if (!arg.startsWith('"') && !arg.startsWith("'")) {
+				allVariables.add(arg);
+			}
+		});
+	}
+
 	const diagnostics: vscode.Diagnostic[] = [];
-	const variableUsage = /\b(\w+)\b/g;
+	const variableUsage = /\b(\w+(\.\w+)*)\b/g; // Capture words and properties like form.city
+	const tagPattern = /<[^>]+>/g;
 
 	for (let lineNo = 0; lineNo < document.lineCount; lineNo++) {
 		const line = document.lineAt(lineNo).text;
 
+		if (line.trim().startsWith('//')) {
+			continue;
+		}
+
+		// Remove content inside tags
+		let processedLine = line.replace(tagPattern, '');
+
+		// If the processed line is empty, skip to the next line
+		if (!processedLine.trim()) {
+			continue;
+		}
+
 		while (match = variableUsage.exec(line)) {
 			const variable = match[1];
+
+			// Split the variable into parts to check for object properties
+			const parts = variable.split('.');
+			const baseVariable = parts[0];
 
 			// If the variable is inside a doublequote string literal, ignore it
 			if (line.slice(0, match.index).split('"').length % 2 === 0 && line.slice(match.index).split('"').length % 2 === 0) {
@@ -194,13 +227,9 @@ function updateDiagnostics(document: vscode.TextDocument, collection: vscode.Dia
 				continue;
 			}
 
-			// If the variable is a cf tag, ignore it.
 
-			// If the variable is a function call, ignore it.
-
-
-			// If the variable is not in our set of known variables, mark it as undefined
-			if (!allVariables.has(variable)) {
+			// Check if the base variable is a known variable or a ColdFusion keyword
+			if (!allVariables.has(baseVariable) && !cfKeywords.has(baseVariable.toLowerCase())) {
 				const range = new vscode.Range(lineNo, match.index, lineNo, match.index + variable.length);
 				const diagnostic = new vscode.Diagnostic(range, `The variable "${variable}" is not defined.`, vscode.DiagnosticSeverity.Error);
 				diagnostics.push(diagnostic);
