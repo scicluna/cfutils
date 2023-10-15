@@ -118,8 +118,16 @@ function updateDiagnostics(document: vscode.TextDocument, collection: vscode.Dia
 
 		// Check for variable usage
 		while (match = variableUsage.exec(line)) {
-			const variable = match[1];
-			const rootVariable = variable.split('.')[0]; // Extract the root variable
+			const isNew = match[1]; // captures the 'new' keyword
+			const variable = match[2];
+
+			if (isNew) {
+				// This is an object instantiation, so don't flag it
+				continue;
+			}
+
+			const parts = variable.split('.');
+			let rootVariable = parts[0];
 
 			// If the root variable is known, skip the diagnostic
 			if (allVariables.has(rootVariable)) {
