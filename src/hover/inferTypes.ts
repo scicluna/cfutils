@@ -12,7 +12,7 @@ export function inferVariableTypes(documentText: string, document: vscode.TextDo
         const assignmentPosition = document.positionAt(match.index);
 
         // Check for function calls in variable assignments
-        const functionCallRegex = /(\w+)\(/;
+        const functionCallRegex = /(\w+(\.\w+)*?)\(/;
         const functionCallMatch = functionCallRegex.exec(assignedValue);
 
         // Extract variables introduced by <cfloop>
@@ -26,8 +26,10 @@ export function inferVariableTypes(documentText: string, document: vscode.TextDo
         }
 
         let inferredType = 'any';
-        if (functionCallMatch) {
-            const calledFunction = functionCallMatch[1];
+        if (assignedValue.startsWith('new ')) {
+            inferredType = 'any';
+        } else if (functionCallMatch) {
+            const calledFunction = functionCallMatch[1].split('.').pop() || functionCallMatch[1];
             inferredType = functionReturnTypes[calledFunction] || inferredType;
         } else {
             if (/^["']/.test(assignedValue)) {

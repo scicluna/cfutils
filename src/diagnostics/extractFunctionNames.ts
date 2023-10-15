@@ -1,6 +1,6 @@
 export function extractFunctionNamesFromLine(line: string): Set<string> {
     const functionDefinitions = /function (\w+)\(/g;
-    const functionCalls = /(\w+)\(/g;
+    const functionCalls = /(\w+(\.\w+)*?)\(/g;
     const functionNames = new Set<string>();
     let funcMatch;
 

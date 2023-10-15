@@ -27,7 +27,7 @@ export function cfCheck(variable: string) {
         'default', 'switch', 'case', 'continue', 'import', 'finally', 'interface', 'pageencoding', 'try', 'catch', 'in', 'break',
         'true', 'false', 'final', 'abstract', 'null', 'cfimport', 'httpResult', 'cfhttp', 'cfhttpparam', 'cfquery', 'cfqueryparam', 'form', 'variables', 'AND', 'OR',
         'cfscript', 'cfoutput', 'cfset', 'cfif', 'cfelseif', 'cfelse', 'cfreturn', 'cfbreak', 'cfcontinue', 'cffunction', 'cffunction', 'cfargument', 'cfcomponent', 'cfproperty',
-        'CGI', 'session', 'application', 'request', 'cookie', 'url', 'this', 'arguments', 'super', 'include', 'abort', 'try', 'catch', 'finally', 'throw', 'rethrow', 'transaction',
+        'CGI', 'session', 'application', 'request', 'cookie', 'url', 'this', 'arguments', 'super', 'include', 'abort', 'try', 'catch', 'finally', 'throw', 'rethrow', 'transaction', 'new'
     ]);
 
     let test = true;
